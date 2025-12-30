@@ -1,0 +1,107 @@
+{
+    "oracle": {
+        "check_interval_seconds": 120,
+        "stablecoin": {
+            "warning_threshold_percent": 0.01,
+            "critical_threshold_percent": 0.02,
+            "min_value_change_percent": 0.2,
+            "cooldown_warning_minutes": 30,
+            "cooldown_critical_minutes": 5,
+            "consecutive_ok_required": 3,
+            "dynamic_cooldowns": [
+                {
+                    "threshold_percent": 10.0,
+                    "cooldown_seconds": 10
+                },
+                {
+                    "threshold_percent": 5.0,
+                    "cooldown_seconds": 30
+                }
+            ]
+        },
+        "volatile": {
+            "warning_threshold_percent": 0.2,
+            "critical_threshold_percent": 0.5,
+            "min_value_change_percent": 0.01,
+            "cooldown_warning_minutes": 10,
+            "cooldown_critical_minutes": 5,
+            "consecutive_ok_required": 2,
+            "dynamic_cooldowns": [
+                {
+                    "threshold_percent": 20.0,
+                    "cooldown_seconds": 10
+                },
+                {
+                    "threshold_percent": 10.0,
+                    "cooldown_seconds": 30
+                }
+            ]
+        }
+    },
+    "health_factor": {
+        "check_interval_seconds": 300,
+        "risky_count_spike": {
+            "warning_threshold_percent": 2.0,
+            "critical_threshold_percent": 5.0,
+            "min_value_change_percent": 0.5,
+            "cooldown_warning_minutes": 60,
+            "cooldown_critical_minutes": 30,
+            "consecutive_ok_required": 2,
+            "check_interval_hours": 24
+        },
+        "avg_hf_drop": {
+            "warning_threshold": 0.1,
+            "critical_threshold": 0.2,
+            "min_value_change": 0.02,
+            "cooldown_warning_minutes": 30,
+            "cooldown_critical_minutes": 15,
+            "consecutive_ok_required": 2,
+            "check_interval_hours": 1
+        },
+        "withdrawal_spike": {
+            "warning_threshold_percent": 1.0,
+            "critical_threshold_percent": 2.0,
+            "min_value_change_percent": 0.5,
+            "cooldown_warning_minutes": 60,
+            "cooldown_critical_minutes": 30,
+            "consecutive_ok_required": 2,
+            "check_interval_hours": 24
+        },
+        "borrow_spike": {
+            "warning_threshold_percent": 1.0,
+            "critical_threshold_percent": 2.0,
+            "min_value_change_percent": 0.5,
+            "cooldown_warning_minutes": 60,
+            "cooldown_critical_minutes": 30,
+            "consecutive_ok_required": 2,
+            "check_interval_hours": 24
+        }
+    },
+    "concentration": {
+        "check_interval_seconds": 600,
+        "whale_supply": {
+            "warning_threshold_percent": 10.0,
+            "critical_threshold_percent": 20.0,
+            "min_value_change_percent": 1.0,
+            "cooldown_warning_minutes": 300,
+            "cooldown_critical_minutes": 120,
+            "consecutive_ok_required": 2
+        },
+        "borrow_top10": {
+            "warning_threshold_percent": 80.0,
+            "critical_threshold_percent": 90.0,
+            "min_value_change_percent": 2.0,
+            "cooldown_warning_minutes": 240,
+            "cooldown_critical_minutes": 180,
+            "consecutive_ok_required": 2
+        },
+        "borrow_single": {
+            "warning_threshold_percent": 40.0,
+            "critical_threshold_percent": 50.0,
+            "min_value_change_percent": 2.0,
+            "cooldown_warning_minutes": 120,
+            "cooldown_critical_minutes": 20,
+            "consecutive_ok_required": 2
+        }
+    }
+}
