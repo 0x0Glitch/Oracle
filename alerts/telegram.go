@@ -54,9 +54,8 @@ func (s *Service) sendTelegram(ctx context.Context, botToken, chatID, message st
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	payload := map[string]interface{}{
-		"chat_id":    chatID,
-		"text":       message,
-		"parse_mode": "HTML",
+		"chat_id": chatID,
+		"text":    message,
 	}
 
 	jsonData, err := json.Marshal(payload)

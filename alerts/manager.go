@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -91,6 +92,16 @@ func (m *Manager) RegisterPolicy(job, metric string, policy AlertPolicy) {
 	m.policies[key] = policy
 }
 
+// alertAction represents what action to take after evaluating an observation
+type alertAction struct {
+	shouldSend      bool
+	message         string
+	isBusinessAlert bool
+	slackMessage    string
+	newState        *AlertState
+	deleteState     bool
+}
+
 // Observe processes a new observation and decides whether to send an alert
 // slackMessage is optional - if provided, it will be sent to Slack alongside Telegram for business alerts
 func (m *Manager) Observe(
@@ -103,6 +114,45 @@ func (m *Manager) Observe(
 	isBusinessAlert bool,
 	slackMessage string,
 ) error {
+	// Determine action under lock, then release before network I/O
+	action := m.evaluateObservation(key, severity, value, summary, details, isBusinessAlert, slackMessage)
+
+	// No action needed
+	if !action.shouldSend && action.newState == nil && !action.deleteState {
+		return nil
+	}
+
+	// Send alert outside of lock to prevent blocking
+	if action.shouldSend {
+		if err := m.sendAlert(ctx, action.message, action.isBusinessAlert, action.slackMessage); err != nil {
+			return err
+		}
+	}
+
+	// Update state after successful send (or if just updating state without send)
+	if action.newState != nil || action.deleteState {
+		m.mu.Lock()
+		if action.deleteState {
+			delete(m.states, key)
+		} else if action.newState != nil {
+			m.states[key] = action.newState
+		}
+		m.mu.Unlock()
+	}
+
+	return nil
+}
+
+// evaluateObservation determines what action to take for an observation (called under lock)
+func (m *Manager) evaluateObservation(
+	key AlertKey,
+	severity Severity,
+	value float64,
+	summary string,
+	details string,
+	isBusinessAlert bool,
+	slackMessage string,
+) alertAction {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -125,7 +175,7 @@ func (m *Manager) Observe(
 	// 1. Handle OK severity (recovery or clear)
 	if severity == SeverityOK {
 		if !exists {
-			return nil // nothing to clear
+			return alertAction{} // nothing to clear
 		}
 
 		state.ConsecutiveOK++
@@ -133,11 +183,11 @@ func (m *Manager) Observe(
 		// Need multiple consecutive OK readings for hysteresis
 		if state.ConsecutiveOK >= policy.ConsecutiveOKRequired && state.Severity != SeverityOK {
 			// Silently clear the alert without sending a recovery notification
-			delete(m.states, key)
-		} else {
-			m.states[key] = state
+			return alertAction{deleteState: true}
 		}
-		return nil
+		// Update state with incremented ConsecutiveOK
+		m.states[key] = state
+		return alertAction{}
 	}
 
 	// Reset consecutive OK counter since we have a non-OK reading
@@ -148,50 +198,59 @@ func (m *Manager) Observe(
 	// 2. New incident (no previous state or was OK)
 	if !exists || state.Severity == SeverityOK {
 		msg := m.formatNewIncidentMessage(key, severity, value, summary, details)
-		if err := m.sendAlert(ctx, msg, isBusinessAlert, slackMessage); err != nil {
-			return err
+		return alertAction{
+			shouldSend:      true,
+			message:         msg,
+			isBusinessAlert: isBusinessAlert,
+			slackMessage:    slackMessage,
+			newState: &AlertState{
+				Severity:       severity,
+				LastSent:       now,
+				FirstTriggered: now,
+				LastValue:      value,
+				LastMessage:    msg,
+				ConsecutiveOK:  0,
+			},
 		}
-
-		m.states[key] = &AlertState{
-			Severity:       severity,
-			LastSent:       now,
-			FirstTriggered: now,
-			LastValue:      value,
-			LastMessage:    msg,
-			ConsecutiveOK:  0,
-		}
-		return nil
 	}
 
 	// 3. Escalation (WARNING -> CRITICAL)
 	if severityLevel(severity) > severityLevel(state.Severity) {
 		msg := m.formatEscalationMessage(key, state, severity, value, summary, details)
-		if err := m.sendAlert(ctx, msg, isBusinessAlert, slackMessage); err != nil {
-			return err
+		return alertAction{
+			shouldSend:      true,
+			message:         msg,
+			isBusinessAlert: isBusinessAlert,
+			slackMessage:    slackMessage,
+			newState: &AlertState{
+				Severity:       severity,
+				LastSent:       now,
+				FirstTriggered: state.FirstTriggered,
+				LastValue:      value,
+				LastMessage:    msg,
+				ConsecutiveOK:  0,
+			},
 		}
-
-		state.Severity = severity
-		state.LastSent = now
-		state.LastValue = value
-		state.LastMessage = msg
-		m.states[key] = state
-		return nil
 	}
 
 	// 4. De-escalation (CRITICAL -> WARNING)
 	if severityLevel(severity) < severityLevel(state.Severity) {
 		// De-escalation goes to developer channel only, not business (no Slack)
 		msg := m.formatDeescalationMessage(key, state, severity, value, summary, details)
-		if err := m.sendAlert(ctx, msg, false, ""); err != nil {
-			return err
+		return alertAction{
+			shouldSend:      true,
+			message:         msg,
+			isBusinessAlert: false,
+			slackMessage:    "",
+			newState: &AlertState{
+				Severity:       severity,
+				LastSent:       now,
+				FirstTriggered: state.FirstTriggered,
+				LastValue:      value,
+				LastMessage:    msg,
+				ConsecutiveOK:  0,
+			},
 		}
-
-		state.Severity = severity
-		state.LastSent = now
-		state.LastValue = value
-		state.LastMessage = msg
-		m.states[key] = state
-		return nil
 	}
 
 	// 5. Same severity: check cooldown and value change
@@ -202,27 +261,30 @@ func (m *Manager) Observe(
 
 	// Check for periodic reminder
 	// Reminders only go to developer channel, and only for CRITICAL issues (no Slack)
-	// Use same message format as initial alert for consistency
 	if policy.ReminderInterval > 0 &&
 		timeSinceFirstTriggered >= policy.ReminderInterval &&
 		timeSinceLastSent >= policy.ReminderInterval &&
 		severity == SeverityCritical {
 		msg := m.formatNewIncidentMessage(key, severity, value, summary, details)
-		// Always send reminders to developer channel, not business
-		if err := m.sendAlert(ctx, msg, false, ""); err != nil {
-			return err
+		return alertAction{
+			shouldSend:      true,
+			message:         msg,
+			isBusinessAlert: false,
+			slackMessage:    "",
+			newState: &AlertState{
+				Severity:       severity,
+				LastSent:       now,
+				FirstTriggered: state.FirstTriggered,
+				LastValue:      value,
+				LastMessage:    msg,
+				ConsecutiveOK:  0,
+			},
 		}
-
-		state.LastSent = now
-		state.LastValue = value
-		state.LastMessage = msg
-		m.states[key] = state
-		return nil
 	}
 
 	// Still in cooldown period
 	if timeSinceLastSent < cooldown {
-		return nil
+		return alertAction{}
 	}
 
 	// Check if value changed significantly
@@ -233,7 +295,7 @@ func (m *Manager) Observe(
 		percentChange = 100.0 // 0 to any non-zero value is considered 100% change
 	}
 	if percentChange < policy.MinValueChange {
-		return nil // minor fluctuation, don't resend
+		return alertAction{} // minor fluctuation, don't resend
 	}
 
 	// Significant change after cooldown
@@ -244,15 +306,21 @@ func (m *Manager) Observe(
 	if sendToBusiness {
 		slackForUpdate = slackMessage
 	}
-	if err := m.sendAlert(ctx, msg, sendToBusiness, slackForUpdate); err != nil {
-		return err
-	}
 
-	state.LastSent = now
-	state.LastValue = value
-	state.LastMessage = msg
-	m.states[key] = state
-	return nil
+	return alertAction{
+		shouldSend:      true,
+		message:         msg,
+		isBusinessAlert: sendToBusiness,
+		slackMessage:    slackForUpdate,
+		newState: &AlertState{
+			Severity:       severity,
+			LastSent:       now,
+			FirstTriggered: state.FirstTriggered,
+			LastValue:      value,
+			LastMessage:    msg,
+			ConsecutiveOK:  0,
+		},
+	}
 }
 
 // GetActiveIncidents returns all currently active incidents
@@ -332,29 +400,27 @@ func severityLevel(s Severity) int {
 // Message formatting functions
 
 func (m *Manager) getAlertTitle(job, metric string) string {
-	titles := map[string]string{
-		"oracle_deviation:price_deviation_stable":   "STABLECOIN DEPEG ALERT",
-		"oracle_deviation:price_deviation_volatile": "ORACLE PRICE DEVIATION",
-		"oracle_deviation:system_health":            "ORACLE SYSTEM HEALTH",
-		"oracle_deviation:data_staleness":           "ORACLE DATA STALE",
-		"oracle_deviation:token_error":              "TOKEN PRICE ERROR",
-		"health_factor:position_risk":               "LOW HEALTH FACTOR POSITION",
-		"health_factor:data_staleness":              "HEALTH DATA STALE",
-		"health_factor:database":                    "DATABASE ERROR",
-		"health_aggregate:risky_count_spike":        "RISKY POSITIONS SPIKE",
-		"health_aggregate:avg_hf_drop":              "AVERAGE HEALTH FACTOR DROP",
-		"health_aggregate:withdrawal_spike":         "WITHDRAWAL SPIKE ALERT",
-		"health_aggregate:borrow_spike":             "BORROW SPIKE ALERT",
-		"concentration:whale_supply":                "WHALE POSITION ALERT",
-		"concentration:borrow_top10":                "BORROW CONCENTRATION - TOP 10",
-		"concentration:borrow_single":               "BORROW CONCENTRATION - SINGLE WALLET",
+	// Use metric-based lookup since job names vary (e.g., oracle_base, oracle_optimism)
+	metricTitles := map[string]string{
+		"price_deviation_stable":   "STABLECOIN DEPEG ALERT",
+		"price_deviation_volatile": "ORACLE PRICE DEVIATION",
+		"system_health":            "ORACLE SYSTEM HEALTH",
+		"data_staleness":           "DATA STALE",
+		"token_error":              "TOKEN PRICE ERROR",
+		"position_risk":            "LOW HEALTH FACTOR POSITION",
+		"risky_count_spike":        "RISKY POSITIONS SPIKE",
+		"avg_hf_drop":              "AVERAGE HEALTH FACTOR DROP",
+		"withdrawal_spike":         "WITHDRAWAL SPIKE ALERT",
+		"borrow_spike":             "BORROW SPIKE ALERT",
+		"whale_supply":             "WHALE POSITION ALERT",
+		"borrow_top10":             "BORROW CONCENTRATION - TOP 10",
+		"borrow_single":            "BORROW CONCENTRATION - SINGLE WALLET",
 	}
 
-	key := job + ":" + metric
-	if title, ok := titles[key]; ok {
+	if title, ok := metricTitles[metric]; ok {
 		return title
 	}
-	return job + " - " + metric
+	return strings.ToUpper(strings.ReplaceAll(metric, "_", " "))
 }
 
 func (m *Manager) formatNewIncidentMessage(key AlertKey, severity Severity, value float64, summary, details string) string {
