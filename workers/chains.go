@@ -24,6 +24,7 @@ type TokenMeta struct {
 	IsStablecoin bool    // Whether this is a stablecoin
 	PegValue     float64 // Expected peg value for stablecoins
 	PriceAddress string  // Underlying token address for price lookups
+	SkipDEXPrice bool    // Skip DEX price check (for native tokens without DEX price source)
 }
 
 // ChainConfig holds chain-specific configuration

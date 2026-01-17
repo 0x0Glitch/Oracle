@@ -40,6 +40,7 @@ func main() {
 		os.Getenv("TELEGRAM_BUSINESS_CHAT_ID"),
 		os.Getenv("TELEGRAM_DEVELOPER_BOT_TOKEN"),
 		os.Getenv("TELEGRAM_DEVELOPER_CHAT_ID"),
+		os.Getenv("SLACK_WEBHOOK_URL"),
 	)
 
 	if alertService.BusinessBotToken == "" || alertService.BusinessChatID == "" {
@@ -47,6 +48,9 @@ func main() {
 	}
 	if alertService.DeveloperBotToken == "" || alertService.DeveloperChatID == "" {
 		log.Println("warning: developer alerts not configured")
+	}
+	if alertService.SlackWebhookURL == "" {
+		log.Println("warning: slack alerts not configured")
 	}
 
 	// Initialize alert manager
@@ -104,6 +108,7 @@ func main() {
 	log.Printf("received %s signal, shutting down...", sig)
 	cancel()
 	worker.Wait()
+	worker.Close()
 
 	// Log final alert state
 	activeIncidents := alertManager.GetActiveIncidents()

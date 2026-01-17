@@ -2,29 +2,31 @@
     "oracle": {
         "check_interval_seconds": 120,
         "stablecoin": {
-            "warning_threshold_percent": 0.01,
-            "critical_threshold_percent": 0.02,
-            "min_value_change_percent": 0.2,
-            "cooldown_warning_minutes": 30,
-            "cooldown_critical_minutes": 5,
+            "warning_threshold_percent": 2,
+            "critical_threshold_percent": 5,
+            "clear_threshold_percent": 1,
+            "min_value_change_percent": 2,
+            "cooldown_warning_minutes": 120,
+            "cooldown_critical_minutes": 10,
             "consecutive_ok_required": 3,
             "dynamic_cooldowns": [
                 {
-                    "threshold_percent": 10.0,
-                    "cooldown_seconds": 10
+                    "threshold_percent": 12.0,
+                    "cooldown_seconds": 60
                 },
                 {
-                    "threshold_percent": 5.0,
-                    "cooldown_seconds": 30
+                    "threshold_percent": 8.0,
+                    "cooldown_seconds": 120
                 }
             ]
         },
         "volatile": {
-            "warning_threshold_percent": 0.2,
-            "critical_threshold_percent": 0.5,
-            "min_value_change_percent": 0.01,
-            "cooldown_warning_minutes": 10,
-            "cooldown_critical_minutes": 5,
+            "warning_threshold_percent": 5,
+            "critical_threshold_percent": 10,
+            "clear_threshold_percent": 2,
+            "min_value_change_percent": 1,
+            "cooldown_warning_minutes": 30,
+            "cooldown_critical_minutes": 15,
             "consecutive_ok_required": 2,
             "dynamic_cooldowns": [
                 {
@@ -32,7 +34,7 @@
                     "cooldown_seconds": 10
                 },
                 {
-                    "threshold_percent": 10.0,
+                    "threshold_percent": 15.0,
                     "cooldown_seconds": 30
                 }
             ]
@@ -40,10 +42,21 @@
     },
     "health_factor": {
         "check_interval_seconds": 300,
+        "position": {
+            "warning_threshold": 1.1,
+            "critical_threshold": 1.02,
+            "clear_threshold": 1.7,
+            "min_value_change": 0.01,
+            "cooldown_warning_minutes": 60,
+            "cooldown_critical_minutes": 120,
+            "consecutive_ok_required": 2,
+            "query_limit": 100
+        },
         "risky_count_spike": {
-            "warning_threshold_percent": 2.0,
-            "critical_threshold_percent": 5.0,
-            "min_value_change_percent": 0.5,
+            "warning_threshold_percent": 1.01,
+            "critical_threshold_percent": 1.001,
+            "clear_threshold_percent": 1.3,
+            "min_value_change_percent": 0.52,
             "cooldown_warning_minutes": 60,
             "cooldown_critical_minutes": 30,
             "consecutive_ok_required": 2,
@@ -52,25 +65,28 @@
         "avg_hf_drop": {
             "warning_threshold": 0.1,
             "critical_threshold": 0.2,
+            "clear_threshold": 0.05,
             "min_value_change": 0.02,
-            "cooldown_warning_minutes": 30,
-            "cooldown_critical_minutes": 15,
+            "cooldown_warning_minutes": 60,
+            "cooldown_critical_minutes": 30,
             "consecutive_ok_required": 2,
             "check_interval_hours": 1
         },
         "withdrawal_spike": {
-            "warning_threshold_percent": 1.0,
-            "critical_threshold_percent": 2.0,
-            "min_value_change_percent": 0.5,
+            "warning_threshold_percent": 10.0,
+            "critical_threshold_percent": 20.0,
+            "clear_threshold_percent": 0.5,
+            "min_value_change_percent": 5,
             "cooldown_warning_minutes": 60,
             "cooldown_critical_minutes": 30,
             "consecutive_ok_required": 2,
             "check_interval_hours": 24
         },
         "borrow_spike": {
-            "warning_threshold_percent": 1.0,
-            "critical_threshold_percent": 2.0,
-            "min_value_change_percent": 0.5,
+            "warning_threshold_percent": 10.0,
+            "critical_threshold_percent": 20.0,
+            "clear_threshold_percent": 0.5,
+            "min_value_change_percent": 2,
             "cooldown_warning_minutes": 60,
             "cooldown_critical_minutes": 30,
             "consecutive_ok_required": 2,
@@ -82,22 +98,25 @@
         "whale_supply": {
             "warning_threshold_percent": 10.0,
             "critical_threshold_percent": 20.0,
-            "min_value_change_percent": 1.0,
-            "cooldown_warning_minutes": 300,
+            "clear_threshold_percent": 8.0,
+            "min_value_change_percent": 3.0,
+            "cooldown_warning_minutes": 120,
             "cooldown_critical_minutes": 120,
             "consecutive_ok_required": 2
         },
         "borrow_top10": {
             "warning_threshold_percent": 80.0,
             "critical_threshold_percent": 90.0,
+            "clear_threshold_percent": 75.0,
             "min_value_change_percent": 2.0,
-            "cooldown_warning_minutes": 240,
-            "cooldown_critical_minutes": 180,
+            "cooldown_warning_minutes": 60,
+            "cooldown_critical_minutes": 120,
             "consecutive_ok_required": 2
         },
         "borrow_single": {
             "warning_threshold_percent": 40.0,
             "critical_threshold_percent": 50.0,
+            "clear_threshold_percent": 35.0,
             "min_value_change_percent": 2.0,
             "cooldown_warning_minutes": 120,
             "cooldown_critical_minutes": 20,

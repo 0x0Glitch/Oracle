@@ -22,7 +22,8 @@ type HealthAggregateJob struct {
 	last24hCheckTime    time.Time
 	last24hTotalSupply  float64
 	last24hTotalBorrow  float64
-	last24hVelocityTime time.Time
+	last24hSupplyTime   time.Time // Separate timestamp for supply tracking
+	last24hBorrowTime   time.Time // Separate timestamp for borrow tracking
 }
 
 type aggregateMetrics struct {
@@ -93,7 +94,8 @@ func NewHealthAggregateJob(databaseURL string, alertManager *alerts.Manager) (*H
 		alertManager:        alertManager,
 		lastRiskyCountCheck: now,
 		last24hCheckTime:    now.Add(-24 * time.Hour),
-		last24hVelocityTime: now.Add(-24 * time.Hour),
+		last24hSupplyTime:   now.Add(-24 * time.Hour),
+		last24hBorrowTime:   now.Add(-24 * time.Hour),
 	}, nil
 }
 
@@ -213,7 +215,7 @@ func (j *HealthAggregateJob) checkRiskyCountSpike(ctx context.Context, metrics *
 			metrics.TotalPositions,
 		)
 
-		if err := j.alertManager.Observe(ctx, key, severity, percentIncrease, summary, details, true); err != nil {
+		if err := j.alertManager.Observe(ctx, key, severity, percentIncrease, summary, details, true, ""); err != nil {
 			log.Printf("[%s] failed to observe risky count spike: %v", j.Name(), err)
 		}
 
@@ -259,7 +261,7 @@ func (j *HealthAggregateJob) checkAvgHealthFactorDrop(ctx context.Context, metri
 			formatUSD(metrics.TotalBorrowUSD),
 		)
 
-		if err := j.alertManager.Observe(ctx, key, severity, hfDrop, summary, details, true); err != nil {
+		if err := j.alertManager.Observe(ctx, key, severity, hfDrop, summary, details, true, ""); err != nil {
 			log.Printf("[%s] failed to observe avg HF drop: %v", j.Name(), err)
 		}
 
@@ -275,7 +277,7 @@ func (j *HealthAggregateJob) checkWithdrawalSpike(ctx context.Context, metrics *
 	now := time.Now()
 
 	// Check if 24 hours have passed since baseline
-	if now.Sub(j.last24hVelocityTime) >= 24*time.Hour && j.last24hTotalSupply > 0 {
+	if now.Sub(j.last24hSupplyTime) >= 24*time.Hour && j.last24hTotalSupply > 0 {
 		// Calculate percentage decrease
 		change := metrics.TotalCollateralUSD - j.last24hTotalSupply
 		percentChange := (change / j.last24hTotalSupply) * 100
@@ -308,17 +310,17 @@ func (j *HealthAggregateJob) checkWithdrawalSpike(ctx context.Context, metrics *
 			formatUSD(change),
 		)
 
-		if err := j.alertManager.Observe(ctx, key, severity, percentDecrease, summary, details, true); err != nil {
+		if err := j.alertManager.Observe(ctx, key, severity, percentDecrease, summary, details, true, ""); err != nil {
 			log.Printf("[%s] failed to observe withdrawal spike: %v", j.Name(), err)
 		}
 
 		// Update baseline
 		j.last24hTotalSupply = metrics.TotalCollateralUSD
-		j.last24hVelocityTime = now
+		j.last24hSupplyTime = now
 	} else if j.last24hTotalSupply == 0 {
 		// Initialize baseline
 		j.last24hTotalSupply = metrics.TotalCollateralUSD
-		j.last24hVelocityTime = now
+		j.last24hSupplyTime = now
 	}
 }
 
@@ -326,7 +328,7 @@ func (j *HealthAggregateJob) checkBorrowSpike(ctx context.Context, metrics *aggr
 	now := time.Now()
 
 	// Check if 24 hours have passed since baseline
-	if now.Sub(j.last24hVelocityTime) >= 24*time.Hour && j.last24hTotalBorrow > 0 {
+	if now.Sub(j.last24hBorrowTime) >= 24*time.Hour && j.last24hTotalBorrow > 0 {
 		// Calculate percentage increase
 		change := metrics.TotalBorrowUSD - j.last24hTotalBorrow
 		percentChange := (change / j.last24hTotalBorrow) * 100
@@ -356,15 +358,17 @@ func (j *HealthAggregateJob) checkBorrowSpike(ctx context.Context, metrics *aggr
 			formatUSD(change),
 		)
 
-		if err := j.alertManager.Observe(ctx, key, severity, percentChange, summary, details, true); err != nil {
+		if err := j.alertManager.Observe(ctx, key, severity, percentChange, summary, details, true, ""); err != nil {
 			log.Printf("[%s] failed to observe borrow spike: %v", j.Name(), err)
 		}
 
 		// Update baseline
 		j.last24hTotalBorrow = metrics.TotalBorrowUSD
+		j.last24hBorrowTime = now
 	} else if j.last24hTotalBorrow == 0 {
 		// Initialize baseline
 		j.last24hTotalBorrow = metrics.TotalBorrowUSD
+		j.last24hBorrowTime = now
 	}
 }
 

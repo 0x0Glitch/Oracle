@@ -99,12 +99,13 @@ func (m *OracleMonitor) Run(ctx context.Context) error {
 
 	// Simple circuit breaker - skip if too many recent failures
 	m.mu.Lock()
-	if m.failures >= 5 {
-		m.mu.Unlock()
-		log.Printf("[%s][%s] circuit open (%d failures), skipping check", m.Name(), m.chain.Name, m.failures)
+	currentFailures := m.failures
+	m.mu.Unlock()
+
+	if currentFailures >= 5 {
+		log.Printf("[%s][%s] circuit open (%d failures), skipping check", m.Name(), m.chain.Name, currentFailures)
 		return errors.New("circuit breaker open")
 	}
-	m.mu.Unlock()
 
 	results := m.checkAllTokens(ctx)
 
@@ -127,7 +128,11 @@ func (m *OracleMonitor) Run(ctx context.Context) error {
 	m.updateSystemHealth(ctx, successCount, errorResults)
 
 	// Update circuit breaker
-	errorRate := float64(len(errorResults)) / float64(len(m.chain.Tokens))
+	tokenCount := len(m.chain.Tokens)
+	if tokenCount == 0 {
+		return nil // No tokens to check
+	}
+	errorRate := float64(len(errorResults)) / float64(tokenCount)
 	m.mu.Lock()
 	if errorRate > 0.5 {
 		m.failures++
@@ -151,16 +156,16 @@ func (m *OracleMonitor) checkAllTokens(ctx context.Context) []tokenResult {
 	for symbol, meta := range m.chain.Tokens {
 		wg.Add(1)
 		go func(sym string, token TokenMeta) {
+			sem <- struct{}{} // Acquire semaphore first
 			defer func() {
+				<-sem // Release semaphore in defer
 				if r := recover(); r != nil {
 					log.Printf("[%s][%s] panic checking %s: %v", m.Name(), m.chain.Name, sym, r)
 					resultChan <- tokenResult{symbol: sym, err: fmt.Errorf("panic: %v", r)}
 				}
 				wg.Done()
-				<-sem
 			}()
 
-			sem <- struct{}{}
 			result := m.checkToken(ctx, sym, token)
 			resultChan <- result
 		}(symbol, meta)
@@ -202,34 +207,47 @@ func (m *OracleMonitor) checkToken(ctx context.Context, symbol string, meta Toke
 	}
 	result.onchainPrice = onchainPrice
 
-	// Get DEX price with retry
+	// Get DEX price with retry (skip for tokens without DEX price source)
 	var dexPrice float64
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		price, err := m.getAlchemyPrice(ctx, meta)
-		if err == nil {
-			dexPrice = price
-			break
+	if !meta.SkipDEXPrice {
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			price, err := m.getAlchemyPrice(ctx, meta)
+			if err == nil {
+				dexPrice = price
+				break
+			}
+			if attempt == maxRetries-1 {
+				result.err = fmt.Errorf("dex price: %w", err)
+				return result
+			}
+			time.Sleep(retryDelay * time.Duration(attempt+1))
 		}
-		if attempt == maxRetries-1 {
-			result.err = fmt.Errorf("dex price: %w", err)
-			return result
-		}
-		time.Sleep(retryDelay * time.Duration(attempt+1))
+		result.dexPrice = dexPrice
 	}
-	result.dexPrice = dexPrice
 
 	// Calculate deviation
 	if meta.IsStablecoin && meta.PegValue > 0 {
 		result.deviation = math.Abs((onchainPrice-meta.PegValue)/meta.PegValue) * 100
 	} else if dexPrice > 0 {
 		result.deviation = math.Abs((onchainPrice-dexPrice)/dexPrice) * 100
+	} else if meta.SkipDEXPrice {
+		// Native tokens without DEX price - only log oracle price, no deviation check
+		result.deviation = 0
+	} else {
+		// Cannot calculate deviation without a reference price
+		result.err = fmt.Errorf("cannot calculate deviation: no reference price (dex=%.6f, peg=%.2f)", dexPrice, meta.PegValue)
+		return result
 	}
 
 	return result
 }
 
 func (m *OracleMonitor) processTokenResult(ctx context.Context, result tokenResult) {
-	meta := m.chain.Tokens[result.symbol]
+	meta, exists := m.chain.Tokens[result.symbol]
+	if !exists {
+		log.Printf("[%s][%s] token %s not found in config", m.Name(), m.chain.Name, result.symbol)
+		return
+	}
 	severity := m.classifyDeviation(result.deviation, meta)
 
 	if meta.IsStablecoin {
@@ -247,7 +265,9 @@ func (m *OracleMonitor) processTokenResult(ctx context.Context, result tokenResu
 	}
 
 	details := m.formatAlertDetails(result, meta)
-	m.alertManager.Observe(ctx, key, severity, result.deviation, "", details, true)
+	slackMsg := m.formatSlackAlert(result, meta, severity)
+
+	m.alertManager.Observe(ctx, key, severity, result.deviation, "", details, true, slackMsg)
 }
 
 func (m *OracleMonitor) formatAlertDetails(result tokenResult, meta TokenMeta) string {
@@ -256,6 +276,15 @@ func (m *OracleMonitor) formatAlertDetails(result tokenResult, meta TokenMeta) s
 			meta.TableName, m.chain.Name, result.deviation, result.onchainPrice, meta.PegValue, result.dexPrice)
 	}
 	return fmt.Sprintf("Token: %s\nChain: %s\nDeviation: %.2f%%\nOnchain: $%.6f\nDEX: $%.6f",
+		meta.TableName, m.chain.Name, result.deviation, result.onchainPrice, result.dexPrice)
+}
+
+func (m *OracleMonitor) formatSlackAlert(result tokenResult, meta TokenMeta, severity alerts.Severity) string {
+	if meta.IsStablecoin {
+		return fmt.Sprintf("ALERT: *STABLECOIN DEPEG*\n\n*Token:* %s\n*Chain:* %s\n*Deviation:* %.2f%%\n*Onchain:* $%.6f\n*DEX:* $%.6f",
+			meta.TableName, m.chain.Name, result.deviation, result.onchainPrice, result.dexPrice)
+	}
+	return fmt.Sprintf("ALERT: *ORACLE PRICE DEVIATION*\n\n*Token:* %s\n*Chain:* %s\n*Deviation:* %.2f%%\n*Onchain:* $%.6f\n*DEX:* $%.6f",
 		meta.TableName, m.chain.Name, result.deviation, result.onchainPrice, result.dexPrice)
 }
 
@@ -365,7 +394,7 @@ func (m *OracleMonitor) getMetricName(meta TokenMeta) string {
 func (m *OracleMonitor) observeTokenError(ctx context.Context, symbol string, err error) {
 	key := alerts.AlertKey{Job: m.Name(), Entity: symbol, Metric: "token_error"}
 	details := fmt.Sprintf("Chain: %s\nToken: %s\nError: %v", m.chain.Name, symbol, err)
-	m.alertManager.Observe(ctx, key, alerts.SeverityWarning, 1.0, "", details, false)
+	m.alertManager.Observe(ctx, key, alerts.SeverityWarning, 1.0, "", details, false, "")
 }
 
 func (m *OracleMonitor) updateSystemHealth(ctx context.Context, successCount int, errors []tokenResult) {
@@ -380,7 +409,11 @@ func (m *OracleMonitor) updateSystemHealth(ctx context.Context, successCount int
 	consecutiveErr := m.consecutiveErr
 	m.mu.Unlock()
 
-	errorRate := float64(len(errors)) / float64(len(m.chain.Tokens)) * 100
+	tokenCount := len(m.chain.Tokens)
+	if tokenCount == 0 {
+		return // No tokens to report on
+	}
+	errorRate := float64(len(errors)) / float64(tokenCount) * 100
 
 	var severity alerts.Severity
 	if errorRate >= 50 {
@@ -393,9 +426,9 @@ func (m *OracleMonitor) updateSystemHealth(ctx context.Context, successCount int
 
 	key := alerts.AlertKey{Job: m.Name(), Entity: "system", Metric: "system_health"}
 	details := fmt.Sprintf("Chain: %s\nSuccess: %.1f%%\nFailed: %d/%d\nConsecutive errors: %d\nLast success: %s",
-		m.chain.Name, 100-errorRate, len(errors), len(m.chain.Tokens), consecutiveErr, lastSuccess.Format("15:04:05"))
+		m.chain.Name, 100-errorRate, len(errors), tokenCount, consecutiveErr, lastSuccess.Format("15:04:05"))
 
-	m.alertManager.Observe(ctx, key, severity, errorRate, "", details, false)
+	m.alertManager.Observe(ctx, key, severity, errorRate, "", details, false, "")
 }
 
 func registerOraclePolicies(alertManager *alerts.Manager, cfg *config.OracleConfig, chainID string) {

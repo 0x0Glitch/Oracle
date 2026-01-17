@@ -14,8 +14,9 @@ import (
 
 // ConcentrationJob monitors whale positions and borrow concentration
 type ConcentrationJob struct {
-	db           *sql.DB
-	alertManager *alerts.Manager
+	db             *sql.DB
+	alertManager   *alerts.Manager
+	previousWhales map[string]bool // Track whale addresses from previous run
 }
 
 type whalePosition struct {
@@ -69,8 +70,9 @@ func NewConcentrationJob(databaseURL string, alertManager *alerts.Manager) (*Con
 	})
 
 	return &ConcentrationJob{
-		db:           db,
-		alertManager: alertManager,
+		db:             db,
+		alertManager:   alertManager,
+		previousWhales: make(map[string]bool),
 	}, nil
 }
 
@@ -103,7 +105,7 @@ func (j *ConcentrationJob) checkWhalePositions(ctx context.Context) error {
 			FROM public."UserPositions"
 			WHERE total_supplied > 0
 		)
-		SELECT 
+		SELECT
 			user_address,
 			total_supplied,
 			(total_supplied / total.total_supply * 100) as percentage
@@ -119,6 +121,7 @@ func (j *ConcentrationJob) checkWhalePositions(ctx context.Context) error {
 	}
 	defer rows.Close()
 
+	currentWhales := make(map[string]bool)
 	whaleCount := 0
 	for rows.Next() {
 		var whale whalePosition
@@ -128,6 +131,7 @@ func (j *ConcentrationJob) checkWhalePositions(ctx context.Context) error {
 		}
 
 		whaleCount++
+		currentWhales[whale.Address] = true
 
 		// Alert for each whale position
 		key := alerts.AlertKey{
@@ -158,10 +162,25 @@ func (j *ConcentrationJob) checkWhalePositions(ctx context.Context) error {
 			whale.Address,
 		)
 
-		if err := j.alertManager.Observe(ctx, key, severity, whale.Percentage, summary, details, true); err != nil {
+		if err := j.alertManager.Observe(ctx, key, severity, whale.Percentage, summary, details, true, ""); err != nil {
 			log.Printf("[%s] failed to observe whale alert: %v", j.Name(), err)
 		}
 	}
+
+	// Clear alerts for whales that dropped below threshold
+	for addr := range j.previousWhales {
+		if !currentWhales[addr] {
+			key := alerts.AlertKey{
+				Job:    j.Name(),
+				Entity: addr,
+				Metric: "whale_supply",
+			}
+			j.alertManager.Observe(ctx, key, alerts.SeverityOK, 0, "", "", false, "")
+		}
+	}
+
+	// Update previous whales for next iteration
+	j.previousWhales = currentWhales
 
 	if whaleCount > 0 {
 		log.Printf("[%s] found %d whale positions (>10%% supply)", j.Name(), whaleCount)
@@ -183,6 +202,8 @@ func (j *ConcentrationJob) checkBorrowConcentration(ctx context.Context) error {
 	}
 
 	if totalBorrows == 0 {
+		// Clear any existing borrow concentration alerts when there are no borrows
+		j.alertManager.Observe(ctx, alerts.AlertKey{Job: j.Name(), Entity: "protocol", Metric: "borrow_top10"}, alerts.SeverityOK, 0, "", "", false, "")
 		return nil // No borrows to check
 	}
 
@@ -261,7 +282,7 @@ func (j *ConcentrationJob) checkBorrowConcentration(ctx context.Context) error {
 			formatUSD(totalBorrows),
 		)
 
-		if err := j.alertManager.Observe(ctx, key, severity, top10Percentage, summary, details, true); err != nil {
+		if err := j.alertManager.Observe(ctx, key, severity, top10Percentage, summary, details, true, ""); err != nil {
 			log.Printf("[%s] failed to observe top10 alert: %v", j.Name(), err)
 		}
 	}
@@ -293,7 +314,7 @@ func (j *ConcentrationJob) checkBorrowConcentration(ctx context.Context) error {
 			maxAddress,
 		)
 
-		if err := j.alertManager.Observe(ctx, key, severity, maxSinglePercentage, summary, details, true); err != nil {
+		if err := j.alertManager.Observe(ctx, key, severity, maxSinglePercentage, summary, details, true, ""); err != nil {
 			log.Printf("[%s] failed to observe single wallet alert: %v", j.Name(), err)
 		}
 	}

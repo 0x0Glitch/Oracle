@@ -45,7 +45,7 @@ func OptimismTokens() map[string]TokenMeta {
 
 func MoonbeamTokens() map[string]TokenMeta {
 	return map[string]TokenMeta{
-		"glmr":    {Symbol: "GLMR", MTokAddr: "0x091608f4e4a15335145be0a279483c0f8e4c7955", Decimals: 18, TableName: "GLMR", PriceAddress: ""},
+		"glmr":    {Symbol: "GLMR", MTokAddr: "0x091608f4e4a15335145be0a279483c0f8e4c7955", Decimals: 18, TableName: "GLMR", SkipDEXPrice: true},
 		"xcdot":   {Symbol: "xcDOT", MTokAddr: "0xd22da948c0ab3a27f5570b604f3adef5f68211c3", Decimals: 10, TableName: "xcDOT", PriceAddress: "0xFfFFfFff1FcaCBd218EDc0EbA20Fc2308C778080"},
 		"frax":    {Symbol: "FRAX", MTokAddr: "0x1C55649f73CDA2f72CEf3DD6C5CA3d49EFcF484C", Decimals: 18, TableName: "FRAX", IsStablecoin: true, PegValue: 1.0, PriceAddress: "0x322E86852e492a7Ee17f28a78c663da38FB33bfb"},
 		"xcusdc":  {Symbol: "xcUSDC", MTokAddr: "0x22b1a40e3178fe7c7109efcc247c5bb2b34abe32", Decimals: 6, TableName: "xcUSDC", IsStablecoin: true, PegValue: 1.0, PriceAddress: "0xFFfffffF7D2B0B761Af01Ca8e25242976ac0aD7D"},
@@ -58,7 +58,7 @@ func MoonbeamTokens() map[string]TokenMeta {
 
 func MoonriverTokens() map[string]TokenMeta {
 	return map[string]TokenMeta{
-		"movr":  {Symbol: "MOVR", MTokAddr: "0x6a1A771C7826596652daDC9145fEAaE62b1cd07f", Decimals: 18, TableName: "MOVR", PriceAddress: ""},
+		"movr":  {Symbol: "MOVR", MTokAddr: "0x6a1A771C7826596652daDC9145fEAaE62b1cd07f", Decimals: 18, TableName: "MOVR", SkipDEXPrice: true},
 		"xcksm": {Symbol: "xcKSM", MTokAddr: "0xa0d116513bd0b8f3f14e6ea41556c6ec34688e0f", Decimals: 12, TableName: "xcKSM", PriceAddress: "0xFfFFfFff1FcaCBd218EDc0EbA20Fc2308C778080"},
 		"frax":  {Symbol: "FRAX", MTokAddr: "0x93Ef8B7c6171BaB1C0A51092B2c9da8dc2ba0e9D", Decimals: 18, TableName: "FRAX", IsStablecoin: true, PegValue: 1.0, PriceAddress: "0x1A93B23281CC1CDE4C4741353F3064709A16197d"},
 	}

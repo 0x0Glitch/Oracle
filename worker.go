@@ -13,6 +13,11 @@ type Job interface {
 	Run(ctx context.Context) error
 }
 
+// Closer is an optional interface for jobs that need cleanup
+type Closer interface {
+	Close() error
+}
+
 type Worker struct {
 	jobs []Job
 	wg   sync.WaitGroup
@@ -38,6 +43,19 @@ func (w *Worker) Start(ctx context.Context) {
 
 func (w *Worker) Wait() {
 	w.wg.Wait()
+}
+
+// Close closes all jobs that implement the Closer interface
+func (w *Worker) Close() {
+	for _, job := range w.jobs {
+		if closer, ok := job.(Closer); ok {
+			if err := closer.Close(); err != nil {
+				log.Printf("[%s] error closing: %v", job.Name(), err)
+			} else {
+				log.Printf("[%s] closed", job.Name())
+			}
+		}
+	}
 }
 
 func (w *Worker) runJob(ctx context.Context, job Job) {

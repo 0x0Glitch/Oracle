@@ -92,6 +92,7 @@ func (m *Manager) RegisterPolicy(job, metric string, policy AlertPolicy) {
 }
 
 // Observe processes a new observation and decides whether to send an alert
+// slackMessage is optional - if provided, it will be sent to Slack alongside Telegram for business alerts
 func (m *Manager) Observe(
 	ctx context.Context,
 	key AlertKey,
@@ -100,6 +101,7 @@ func (m *Manager) Observe(
 	summary string,
 	details string,
 	isBusinessAlert bool,
+	slackMessage string,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -146,7 +148,7 @@ func (m *Manager) Observe(
 	// 2. New incident (no previous state or was OK)
 	if !exists || state.Severity == SeverityOK {
 		msg := m.formatNewIncidentMessage(key, severity, value, summary, details)
-		if err := m.sendAlert(ctx, msg, isBusinessAlert); err != nil {
+		if err := m.sendAlert(ctx, msg, isBusinessAlert, slackMessage); err != nil {
 			return err
 		}
 
@@ -164,7 +166,7 @@ func (m *Manager) Observe(
 	// 3. Escalation (WARNING -> CRITICAL)
 	if severityLevel(severity) > severityLevel(state.Severity) {
 		msg := m.formatEscalationMessage(key, state, severity, value, summary, details)
-		if err := m.sendAlert(ctx, msg, isBusinessAlert); err != nil {
+		if err := m.sendAlert(ctx, msg, isBusinessAlert, slackMessage); err != nil {
 			return err
 		}
 
@@ -178,9 +180,9 @@ func (m *Manager) Observe(
 
 	// 4. De-escalation (CRITICAL -> WARNING)
 	if severityLevel(severity) < severityLevel(state.Severity) {
-		// De-escalation goes to developer channel only, not business
+		// De-escalation goes to developer channel only, not business (no Slack)
 		msg := m.formatDeescalationMessage(key, state, severity, value, summary, details)
-		if err := m.sendAlert(ctx, msg, false); err != nil {
+		if err := m.sendAlert(ctx, msg, false, ""); err != nil {
 			return err
 		}
 
@@ -199,7 +201,7 @@ func (m *Manager) Observe(
 	timeSinceFirstTriggered := now.Sub(state.FirstTriggered)
 
 	// Check for periodic reminder
-	// Reminders only go to developer channel, and only for CRITICAL issues
+	// Reminders only go to developer channel, and only for CRITICAL issues (no Slack)
 	// Use same message format as initial alert for consistency
 	if policy.ReminderInterval > 0 &&
 		timeSinceFirstTriggered >= policy.ReminderInterval &&
@@ -207,7 +209,7 @@ func (m *Manager) Observe(
 		severity == SeverityCritical {
 		msg := m.formatNewIncidentMessage(key, severity, value, summary, details)
 		// Always send reminders to developer channel, not business
-		if err := m.sendAlert(ctx, msg, false); err != nil {
+		if err := m.sendAlert(ctx, msg, false, ""); err != nil {
 			return err
 		}
 
@@ -224,7 +226,12 @@ func (m *Manager) Observe(
 	}
 
 	// Check if value changed significantly
-	percentChange := math.Abs((value - state.LastValue) / state.LastValue * 100)
+	var percentChange float64
+	if state.LastValue != 0 {
+		percentChange = math.Abs((value - state.LastValue) / state.LastValue * 100)
+	} else if value != 0 {
+		percentChange = 100.0 // 0 to any non-zero value is considered 100% change
+	}
 	if percentChange < policy.MinValueChange {
 		return nil // minor fluctuation, don't resend
 	}
@@ -233,7 +240,11 @@ func (m *Manager) Observe(
 	msg := m.formatUpdateMessage(key, state, severity, value, summary, details)
 	// Updates for CRITICAL go to business, WARNING updates go to developer only
 	sendToBusiness := isBusinessAlert && severity == SeverityCritical
-	if err := m.sendAlert(ctx, msg, sendToBusiness); err != nil {
+	slackForUpdate := ""
+	if sendToBusiness {
+		slackForUpdate = slackMessage
+	}
+	if err := m.sendAlert(ctx, msg, sendToBusiness, slackForUpdate); err != nil {
 		return err
 	}
 
@@ -283,9 +294,24 @@ func (m *Manager) calculateCooldown(policy AlertPolicy, severity Severity, value
 	return policy.CooldownWarning
 }
 
-func (m *Manager) sendAlert(ctx context.Context, message string, isBusinessAlert bool) error {
+func (m *Manager) sendAlert(ctx context.Context, message string, isBusinessAlert bool, slackMessage string) error {
 	if isBusinessAlert {
-		return m.service.SendBusinessAlert(ctx, message)
+		if err := m.service.SendBusinessAlert(ctx, message); err != nil {
+			return err
+		}
+		// Also send to Slack for business alerts if slackMessage is provided
+		if slackMessage != "" {
+			if err := m.service.SendSlackAlert(ctx, slackMessage); err != nil {
+				// Log but don't fail - Telegram is primary
+				fmt.Printf("[alerts] slack alert failed: %v\n", err)
+			}
+		}
+		// Also send business alerts to developer channel for visibility
+		if err := m.service.SendDeveloperAlert(ctx, message); err != nil {
+			// Log but don't fail - business channel is primary
+			fmt.Printf("[alerts] developer alert failed: %v\n", err)
+		}
+		return nil
 	}
 	return m.service.SendDeveloperAlert(ctx, message)
 }

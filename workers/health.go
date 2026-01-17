@@ -145,7 +145,7 @@ func (j *HealthJobV2) checkDataFreshness(ctx context.Context) error {
 		timeSinceUpdate.Hours(),
 	)
 
-	if err := j.alertManager.Observe(ctx, key, severity, timeSinceUpdate.Hours(), summary, details, false); err != nil {
+	if err := j.alertManager.Observe(ctx, key, severity, timeSinceUpdate.Hours(), summary, details, false, ""); err != nil {
 		log.Printf("[%s] failed to observe data freshness: %v", j.Name(), err)
 	}
 
@@ -201,7 +201,7 @@ func (j *HealthJobV2) observeDatabaseError(ctx context.Context, operation string
 	summary := fmt.Sprintf("Database operation failed: %s", operation)
 	details := fmt.Sprintf("Error: %v", err)
 
-	j.alertManager.Observe(ctx, key, alerts.SeverityCritical, 1.0, summary, details, false)
+	j.alertManager.Observe(ctx, key, alerts.SeverityCritical, 1.0, summary, details, false, "")
 }
 
 func (j *HealthJobV2) clearDatabaseError(ctx context.Context) {
@@ -212,7 +212,7 @@ func (j *HealthJobV2) clearDatabaseError(ctx context.Context) {
 			Entity: "database",
 			Metric: operation + "_error",
 		}
-		j.alertManager.Observe(ctx, key, alerts.SeverityOK, 0, "Database operational", "", false)
+		j.alertManager.Observe(ctx, key, alerts.SeverityOK, 0, "Database operational", "", false, "")
 	}
 }
 

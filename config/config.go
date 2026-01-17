@@ -160,6 +160,7 @@ func DefaultConfig() *Config {
 			},
 			Volatile: OracleThresholdConfig{
 				ThresholdConfig: ThresholdConfig{
+					WarningThresholdPercent:  3.0,
 					CriticalThresholdPercent: 5.0,
 					MinValueChangePercent:    1.0,
 					CooldownWarningMinutes:   30,
