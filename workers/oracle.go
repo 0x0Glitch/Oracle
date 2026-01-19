@@ -281,10 +281,10 @@ func (m *OracleMonitor) formatAlertDetails(result tokenResult, meta TokenMeta) s
 
 func (m *OracleMonitor) formatSlackAlert(result tokenResult, meta TokenMeta, severity alerts.Severity) string {
 	if meta.IsStablecoin {
-		return fmt.Sprintf("ALERT: *STABLECOIN DEPEG*\n\n*Token:* %s\n*Chain:* %s\n*Deviation:* %.2f%%\n*Onchain:* $%.6f\n*DEX:* $%.6f",
+		return fmt.Sprintf("ALERT: STABLECOIN DEPEG\nToken: %s\nChain: %s\nDeviation: %.2f%%\nOnchain: $%.6f\nDEX: $%.6f",
 			meta.TableName, m.chain.Name, result.deviation, result.onchainPrice, result.dexPrice)
 	}
-	return fmt.Sprintf("ALERT: *ORACLE PRICE DEVIATION*\n\n*Token:* %s\n*Chain:* %s\n*Deviation:* %.2f%%\n*Onchain:* $%.6f\n*DEX:* $%.6f",
+	return fmt.Sprintf("ALERT: ORACLE PRICE DEVIATION\nToken: %s\nChain: %s\nDeviation: %.2f%%\nOnchain: $%.6f\nDEX: $%.6f",
 		meta.TableName, m.chain.Name, result.deviation, result.onchainPrice, result.dexPrice)
 }
 
